@@ -62,3 +62,8 @@ exports/snapshots/*
 !exports/snapshots/.gitkeep
 exports/reports/*
 !exports/reports/.gitkeep
+
+# Claude Code runtime
+.claude/
+.claude-flow/
+.swarm/
