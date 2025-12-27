@@ -335,32 +335,169 @@
 
 ---
 
+## STEP 13: HUMAN AUTHORIZATION AND EXECUTION UNLOCK PROTOCOLS
+
+### Acceptance Criteria
+
+**Required Artifacts:**
+- ✅ OPERATOR_AUTHORIZATION_MODEL.md created with 5 human roles
+- ✅ EXECUTION_UNLOCK_PROTOCOL.md created with 4-phase unlock process
+- ✅ TWO_KEY_RULE_SPEC.md created with dual-approval mechanism
+- ✅ EMERGENCY_BRAKE_SPEC.md created with immediate halt mechanism
+- ✅ CHANGE_AUTHORIZATION_LOG.md created with append-only log design
+- ✅ FAILURE_OF_TRUST.md created with trust-minimized protections
+- ✅ DEFINITION_OF_DONE.md updated with STEP 13 acceptance criteria
+
+**Validation:**
+- [ ] OPERATOR_AUTHORIZATION_MODEL.md has 5 roles defined (Repository Maintainer, Execution Approver, Technical Authority, Emergency Breaker, Repository Owner)
+- [ ] OPERATOR_AUTHORIZATION_MODEL.md has explicit prohibitions for each role
+- [ ] OPERATOR_AUTHORIZATION_MODEL.md has PGP key requirements
+- [ ] OPERATOR_AUTHORIZATION_MODEL.md has role separation requirements
+- [ ] EXECUTION_UNLOCK_PROTOCOL.md has 4 phases (Pre-Unlock Verification, Technical Readiness, Human Intent, State Transition)
+- [ ] EXECUTION_UNLOCK_PROTOCOL.md has 15+ steps across all phases
+- [ ] EXECUTION_UNLOCK_PROTOCOL.md has intentional annoyances to prevent reckless execution
+- [ ] TWO_KEY_RULE_SPEC.md has dual-approval mechanism (Key 1: Technical Readiness, Key 2: Human Intent)
+- [ ] TWO_KEY_RULE_SPEC.md has 5 violation types defined
+- [ ] TWO_KEY_RULE_SPEC.md has key generation and rotation procedures
+- [ ] EMERGENCY_BRAKE_SPEC.md has 5 brake conditions defined
+- [ ] EMERGENCY_BRAKE_SPEC.md has immediate halt behavior (no debate, no confirmation)
+- [ ] EMERGENCY_BRAKE_SPEC.md has brake clearing procedure with investigation requirements
+- [ ] EMERGENCY_BRAKE_SPEC.md has false-positive handling
+- [ ] CHANGE_AUTHORIZATION_LOG.md has 7 event types defined
+- [ ] CHANGE_AUTHORIZATION_LOG.md has standard entry format with required fields
+- [ ] CHANGE_AUTHORIZATION_LOG.md has append-only enforcement mechanisms
+- [ ] CHANGE_AUTHORIZATION_LOG.md has audit procedures defined
+- [ ] FAILURE_OF_TRUST.md has 10 protection layers defined
+- [ ] FAILURE_OF_TRUST.md has failure scenarios and system responses for each
+- [ ] DEFINITION_OF_DONE.md has STEP 13 acceptance criteria
+- [ ] DEFINITION_OF_DONE.md has STEP 13 STOP conditions
+
+**Role Completeness:**
+- [ ] Repository Maintainer: ALLOWED actions defined, EXPLICIT PROHIBITIONS defined
+- [ ] Execution Approver: ALLOWED actions defined, EXPLICIT PROHIBITIONS defined
+- [ ] Technical Authority: ALLOWED actions defined, EXPLICIT PROHIBITIONS defined
+- [ ] Emergency Breaker: ALLOWED actions defined, EXPLICIT PROHIBITIONS defined
+- [ ] Repository Owner: ALLOWED actions defined, EXPLICIT PROHIBITIONS defined
+- [ ] Universal denials: 6 explicit denials for ALL roles
+- [ ] Two-person rule: Required for execution unlock
+- [ ] Role conflicts: Defined and prohibited
+
+**Unlock Protocol Completeness:**
+- [ ] Phase 0 (Pre-Unlock Verification): 3 steps (authorization roles, protected files, environment)
+- [ ] Phase 1 (Technical Readiness Verification): 5 steps (prechecks, drift detection, backup, rollback, artifact)
+- [ ] Phase 2 (Human Intent Verification): 3 steps (review, independent verification, artifact)
+- [ ] Phase 3 (Dual Signature Verification): 2 steps (two-person rule, combined artifact)
+- [ ] Phase 4 (Execution State Transition): 3 steps (state file, log, commit)
+- [ ] Post-Unlock Verification: 4 steps (confirm state, confirm artifacts, confirm signatures, confirm log)
+
+**Two-Key Rule Completeness:**
+- [ ] Key 1 (Technical Readiness): Responsibilities defined, prohibitions defined, conflicts defined
+- [ ] Key 2 (Human Intent): Responsibilities defined, prohibitions defined, conflicts defined
+- [ ] Two-Key Combination: Both keys must be presented simultaneously
+- [ ] Two-Key Rule Violations: 5 violation types defined with responses
+- [ ] Key Generation: PGP key generation procedures defined
+- [ ] Key Distribution: Public key publishing and signing procedures defined
+- [ ] Key Rotation: Annual rotation procedure defined
+- [ ] Key Recovery: Lost key and compromised key procedures defined
+
+**Emergency Brake Completeness:**
+- [ ] Brake Activation: 5 conditions defined (CRITICAL_FAILURE, SECURITY_BREACH, DATA_CORRUPTION, UNEXPECTED_BEHAVIOR, OTHER)
+- [ ] Immediate Halt: 6 actions occur immediately (terminate tools, halt adapters, pause workflows, close connections, lock state, block operations)
+- [ ] Override Authority: Emergency Brake overrides ALL other authorizations
+- [ ] Brake Clearing: Only Emergency Breaker can clear, after investigation, with requirements defined
+- [ ] False-Positive Handling: False positives OK, documented as learning opportunity
+- [ ] Regular Testing: Quarterly testing required
+
+**Authorization Log Completeness:**
+- [ ] Event Types: 7 event types defined (ROLE_GRANTED, ROLE_REVOKED, EXECUTION_UNLOCK_GRANTED, EXECUTION_UNLOCK_REVOKED, EMERGENCY_BRAKE_ACTIVATED, EMERGENCY_BRAKE_CLEARED, PROTECTED_FILE_MODIFIED, AUTHORIZATION_MODEL_CHANGED)
+- [ ] Entry Format: Standard format with required fields (Actor, Action, Target, Artifacts, Signatures, Rationale, Conditions, References)
+- [ ] Append-Only Enforcement: File permissions, Git history, cryptographic hashing, PGP signatures
+- [ ] Log Auditing: Monthly audits with integrity, completeness, and consistency checks
+
+**Trust-Minimized Protections:**
+- [ ] Protection 1: Prechecks cannot be bypassed (automated verification, two-person rule)
+- [ ] Protection 2: Drift detection cannot be ignored (automatic rejection, no exceptions)
+- [ ] Protection 3: Two-person rule cannot be circumvented (PGP key IDs must differ)
+- [ ] Protection 4: Service_role quarantine cannot be bypassed (precheck detection, CI guardrail, drift detection)
+- [ ] Protection 5: Emergency brake cannot be overridden (execution state locked, only Emergency Breaker can clear)
+- [ ] Protection 6: Append-only tables cannot be modified (no DELETE grants, RLS policies)
+- [ ] Protection 7: Protected files cannot be silently modified (CI guardrails, Git history, drift detection)
+- [ ] Protection 8: Execution unlock cannot be granted without dual approval (PGP signatures, web of trust)
+- [ ] Protection 9: Precheck execution order cannot be changed (fixed order, automated script)
+- [ ] Protection 10: Rollback plan cannot be skipped (precheck requirement, artifact verification)
+
+**NO EXECUTION:**
+- [ ] No PGP keys were generated (DESIGN ONLY)
+- [ ] No roles were assigned (DESIGN ONLY)
+- [ ] No execution unlock artifacts were created (DESIGN ONLY)
+- [ ] No emergency brake was activated (DESIGN ONLY)
+- [ ] No authorization log entries were created (DESIGN ONLY)
+- [ ] DOCUMENTATION ONLY, NO IMPLEMENTATION
+
+**STOP Conditions for STEP 13:**
+- [ ] If ANY human role is undefined → STEP 13 FAILED
+- [ ] If ANY role prohibition is missing → STEP 13 FAILED
+- [ ] If execution unlock protocol phase is undefined → STEP 13 FAILED
+- [ ] If two-key rule violation type is undefined → STEP 13 FAILED
+- [ ] If emergency brake condition is undefined → STEP 13 FAILED
+- [ ] If authorization log event type is undefined → STEP 13 FAILED
+- [ ] If ANY protection layer is undefined → STEP 13 FAILED
+- [ ] If DEFINITION_OF_DONE.md is not updated → STEP 13 FAILED
+
+**STEP 13 SUCCESS CONDITIONS:**
+- [ ] All 7 required artifacts created
+- [ ] All 5 human roles defined with prohibitions
+- [ ] All 4 execution unlock phases defined with steps
+- [ ] All 5 two-key rule violations defined with responses
+- [ ] All 5 emergency brake conditions defined with responses
+- [ ] All 7 authorization log event types defined with formats
+- [ ] All 10 trust-minimized protection layers defined
+- [ ] DEFINITION_OF_DONE.md has complete STEP 13 acceptance criteria
+- [ ] All artifacts are DESIGN ONLY (no implementation)
+
+---
+
 ## FINAL STOP CONDITION
 
-**NO PROGRESSION BEYOND STEP 12 WITHOUT EXPLICIT APPROVAL:**
-- [ ] All 12 steps (STEP 5 through STEP 12) are COMPLETE
-- [ ] All acceptance criteria for STEP 5 through STEP 12 are MET
-- [ ] All artifacts for STEP 5 through STEP 12 are COMMITTED
+**NO PROGRESSION BEYOND STEP 13 WITHOUT GOVERNANCE:**
+- [ ] All 13 steps (STEP 5 through STEP 13) are COMPLETE
+- [ ] All acceptance criteria for STEP 5 through STEP 13 are MET
+- [ ] All artifacts for STEP 5 through STEP 13 are COMMITTED
 - [ ] NO execution has occurred in any step (DESIGN + ARTIFACT GENERATION ONLY)
 - [ ] All drift detection mechanisms are in place
 - [ ] All precheck specifications are defined
 - [ ] All CI guardrails are designed (not implemented)
+- [ ] All human authorization roles are defined
+- [ ] All execution unlock protocols are defined
+- [ ] All emergency brake procedures are defined
+- [ ] All trust-minimized protections are defined
 
-**BEFORE ANY EXECUTION (STEP 13+):**
-- [ ] Explicit operator approval required
-- [ ] All prechecks must PASS
-- [ ] All drift detection must PASS
-- [ ] All CI guardrails must PASS (if CI implemented)
-- [ ] All STOP conditions must be CLEAR
-- [ ] Database backup verified
-- [ ] Rollback plan tested
-- [ ] Audit infrastructure ready
+**BEFORE ANY EXECUTION (AFTER STEP 13):**
+- [ ] Two-key rule must be satisfied (Technical Authority + Execution Approver)
+- [ ] All 8 prechecks must PASS
+- [ ] All 12 drift detection rules must PASS
+- [ ] Backup must be verified
+- [ ] Rollback plan must be tested
+- [ ] Execution unlock artifact must be created and signed
+- [ ] Authorization log must be updated
+- [ ] Execution state must be transitioned to EXECUTION_ENABLED
+- [ ] Emergency brake must be operational (can be activated at any time)
+
+**EXECUTION IS FORBIDDEN UNTIL:**
+- [ ] All 13 steps are COMPLETE
+- [ ] All authorization roles are ASSIGNED to real humans
+- [ ] All PGP keys are GENERATED and PUBLISHED
+- [ ] Two-key rule is SATISFIED (two different humans approve)
+- [ ] All prechecks PASS (verified by Technical Authority)
+- [ ] All drift detection PASS (verified by Technical Authority)
+- [ ] Execution unlock artifact is CREATED and SIGNED
+- [ ] Emergency brake is OPERATIONAL
 
 ---
 
 ## Summary
 
-**Steps Defined:** 12 (STEP 5 through STEP 12)
+**Steps Defined:** 13 (STEP 5 through STEP 13)
 **Acceptance Criteria:** Complete for all 12 steps
 **Artifacts Required:** 50+ documents, schemas, workflows, specifications
 **NO EXECUTION:** No execution in any step (DESIGN + ARTIFACT GENERATION ONLY)
