@@ -60,13 +60,35 @@
       "enum": ["local", "remote", "browser"],
       "description": "Where this tool executes"
     },
+    "adapter_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Cloud adapter to use (for remote tools). Tools MUST reference adapters, not direct cloud URLs. See CLOUD_ADAPTER_INTERFACES.md",
+      "examples": [
+        "supabase-postgres",
+        "qdrant-vector",
+        "meilisearch",
+        "cloudflare-r2",
+        "prometheus",
+        "loki",
+        "livekit"
+      ]
+    },
+    "adapter_operation": {
+      "type": "string",
+      "description": "Operation to execute on the adapter (e.g., 'query', 'search', 'put_object'). Must match adapter interface specification.",
+      "examples": ["query", "vector_search", "search", "put_object", "get_object"]
+    },
     "credentials_required": {
       "type": "array",
-      "description": "Array of credential IDs (not the secrets themselves) needed to execute",
+      "description": "Array of credential IDs (not the secrets themselves) needed to execute. For cloud adapters, use adapter_id instead of direct cloud URLs.",
       "items": {
         "type": "string",
         "pattern": "^[A-Z0-9_]+$",
-        "examples": ["GITHUB_TOKEN", "SUPABASE_KEY", "N8N_API_KEY"]
+        "examples": ["GITHUB_TOKEN", "N8N_API_KEY"],
+        "not": {
+          "pattern": "^(SUPABASE_URL|QDRANT_URL|MEILISEARCH_HOST|R2_ENDPOINT|GRAFANA_URL|PROMETHEUS_URL|LOKI_URL|LIVEKIT_URL)$"
+        }
       },
       "uniqueItems": true
     },
