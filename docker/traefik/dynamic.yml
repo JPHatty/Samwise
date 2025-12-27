@@ -1,0 +1,19 @@
+http:
+  routers:
+    n8n:
+      rule: "Host(`n8n.localhost`)"
+      service: n8n
+      entryPoints:
+        - websecure
+
+  services:
+    n8n:
+      loadBalancer:
+        servers:
+          - url: "http://samwise-n8n:5678"
+
+  middlewares:
+    ratelimit:
+      rateLimit:
+        average: 100
+        burst: 50

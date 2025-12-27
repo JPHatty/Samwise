@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Run Record",
+  "type": "object",
+  "required": ["id", "timestamp", "intent", "outcome"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique run identifier"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp"
+    },
+    "intent": {
+      "$ref": "intent-spec.schema.json"
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["success", "result"],
+      "properties": {
+        "success": { "type": "boolean" },
+        "result": { "type": "object" },
+        "errors": { "type": "array" }
+      }
+    }
+  }
+}

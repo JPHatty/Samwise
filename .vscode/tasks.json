@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Docker: Start All Services",
+      "type": "shell",
+      "command": "docker compose -f docker/compose.yaml up -d",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Docker: Stop All Services",
+      "type": "shell",
+      "command": "docker compose -f docker/compose.yaml down",
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: View Logs",
+      "type": "shell",
+      "command": "docker compose -f docker/compose.yaml logs -f",
+      "problemMatcher": []
+    },
+    {
+      "label": "n8n: Export Workflows",
+      "type": "shell",
+      "command": "./scripts/verify/export-n8n.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "Verify: Health Check",
+      "type": "shell",
+      "command": "./scripts/verify/health-check.sh",
+      "problemMatcher": []
+    }
+  ]
+}

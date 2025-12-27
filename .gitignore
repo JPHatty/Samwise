@@ -1,0 +1,64 @@
+# Environment & Secrets
+.env
+.env.local
+*.env
+!.env.example
+*.key
+*.pem
+*.p12
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+exports/logs/*
+!exports/logs/.gitkeep
+
+# Docker
+docker/*/data/*
+!docker/*/data/.gitkeep
+*.override.yml
+
+# Build artifacts
+dist/
+build/
+*.tar.gz
+*.zip
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# n8n
+n8n/credentials/*
+!n8n/credentials/.gitkeep
+
+# Exports (keep structure, not data)
+exports/n8n/*
+!exports/n8n/.gitkeep
+exports/snapshots/*
+!exports/snapshots/.gitkeep
+exports/reports/*
+!exports/reports/.gitkeep

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.10
+    container_name: samwise-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    networks:
+      - samwise
+
+  redis:
+    image: redis:7-alpine
+    container_name: samwise-redis
+    restart: unless-stopped
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./redis/data:/data
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - samwise
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: samwise-n8n
+    restart: unless-stopped
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL}
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+    volumes:
+      - ./n8n/data:/home/node/.n8n
+      - ../n8n/workflows:/home/node/.n8n/workflows
+    ports:
+      - "5678:5678"
+    networks:
+      - samwise
+    depends_on:
+      - redis
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: samwise-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+      - ./livekit/data:/data
+    ports:
+      - "7880:7880"
+      - "7881:7881/udp"
+    networks:
+      - samwise
+
+networks:
+  samwise:
+    name: samwise
+    driver: bridge
