@@ -1,24 +1,178 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JPHatty/Samwise/schemas/intent-spec.schema.json",
   "title": "Intent Specification",
+  "description": "Canonical, structured representation of operator intent. This is the ONLY allowed input to autonomous planning.",
   "type": "object",
-  "required": ["intent", "context", "constraints"],
+  "required": [
+    "intent_id",
+    "issued_at",
+    "issuer",
+    "objective",
+    "constraints",
+    "forbidden_actions",
+    "required_outputs",
+    "validation_level",
+    "rollback_required",
+    "audit_required"
+  ],
+  "additionalProperties": false,
   "properties": {
-    "intent": {
+    "intent_id": {
       "type": "string",
-      "description": "Human-readable intent description"
+      "format": "uuid",
+      "description": "Unique identifier for this intent (UUID v4)"
     },
-    "context": {
-      "type": "object",
-      "description": "Contextual information for intent execution"
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp when intent was issued"
+    },
+    "issuer": {
+      "type": "string",
+      "enum": ["human", "agent"],
+      "description": "Origin of the intent"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "Clear, non-empty statement of what needs to be accomplished"
     },
     "constraints": {
-      "type": "object",
-      "description": "Hard constraints that must be satisfied"
+      "type": "array",
+      "description": "Explicit prohibitions and limitations",
+      "items": {
+        "type": "object",
+        "required": ["type", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "resource_limit",
+              "time_limit",
+              "scope_boundary",
+              "data_protection",
+              "service_restriction",
+              "geographic_restriction"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "description": "Machine-readable constraint value (optional)"
+          }
+        }
+      }
+    },
+    "allowed_tools": {
+      "type": "array",
+      "description": "Explicit whitelist of tool IDs that may be used (empty = all allowed)",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_-]+$"
+      },
+      "uniqueItems": true
+    },
+    "forbidden_actions": {
+      "type": "array",
+      "description": "Actions that must never be performed",
+      "items": {
+        "type": "string",
+        "enum": [
+          "delete_data",
+          "modify_production",
+          "expose_credentials",
+          "external_network_call",
+          "install_dependencies",
+          "modify_system_config",
+          "create_user_accounts",
+          "grant_permissions",
+          "disable_security",
+          "bypass_validation"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "required_outputs": {
+      "type": "array",
+      "description": "Artifacts that must be produced",
+      "items": {
+        "type": "object",
+        "required": ["artifact_type", "format"],
+        "additionalProperties": false,
+        "properties": {
+          "artifact_type": {
+            "type": "string",
+            "enum": [
+              "file",
+              "report",
+              "metric",
+              "log",
+              "state_snapshot",
+              "configuration"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "yaml",
+              "markdown",
+              "text",
+              "binary"
+            ]
+          },
+          "destination": {
+            "type": "string",
+            "description": "Optional path or URI where artifact should be stored"
+          },
+          "schema_ref": {
+            "type": "string",
+            "format": "uri",
+            "description": "Optional JSON Schema reference for validation"
+          }
+        }
+      }
+    },
+    "validation_level": {
+      "type": "string",
+      "enum": ["strict", "normal", "experimental"],
+      "description": "How rigorously to validate execution against intent",
+      "default": "normal"
+    },
+    "rollback_required": {
+      "type": "boolean",
+      "description": "Whether execution must be reversible"
+    },
+    "audit_required": {
+      "type": "boolean",
+      "description": "Whether full audit trail is mandatory"
     },
     "metadata": {
       "type": "object",
-      "description": "Additional metadata"
+      "description": "Optional metadata for tracking and context",
+      "additionalProperties": true,
+      "properties": {
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "critical"]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent_intent_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "If this intent is derived from another"
+        }
+      }
     }
   }
 }

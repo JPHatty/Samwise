@@ -1,28 +1,254 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JPHatty/Samwise/schemas/run-record.schema.json",
   "title": "Run Record",
+  "description": "Immutable audit log for every execution attempt. Assumes append-only storage. No mutation after write.",
   "type": "object",
-  "required": ["id", "timestamp", "intent", "outcome"],
+  "required": [
+    "run_id",
+    "intent_id",
+    "tool_id",
+    "started_at",
+    "finished_at",
+    "status",
+    "inputs_hash",
+    "outputs_hash",
+    "artifacts",
+    "logs_ref",
+    "rollback_executed",
+    "critic_verdict"
+  ],
+  "additionalProperties": false,
   "properties": {
-    "id": {
+    "run_id": {
       "type": "string",
-      "description": "Unique run identifier"
+      "format": "uuid",
+      "description": "Unique identifier for this execution run (UUID v4)"
     },
-    "timestamp": {
+    "intent_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Reference to the intent that triggered this run"
+    },
+    "tool_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$",
+      "description": "Tool that was executed"
+    },
+    "tool_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "description": "Version of the tool specification used"
+    },
+    "started_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 timestamp"
+      "description": "RFC3339 timestamp when execution began"
     },
-    "intent": {
-      "$ref": "intent-spec.schema.json"
+    "finished_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "RFC3339 timestamp when execution completed (null if still running)"
     },
-    "outcome": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "failure", "aborted", "running"],
+      "description": "Final status of the execution"
+    },
+    "inputs_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hash of input parameters (for audit trail)"
+    },
+    "outputs_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hash of outputs (null if execution failed before producing outputs)"
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Paths or URIs to artifacts produced by this run",
+      "items": {
+        "type": "object",
+        "required": ["type", "location", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "file",
+              "report",
+              "metric",
+              "log",
+              "state_snapshot",
+              "configuration"
+            ]
+          },
+          "location": {
+            "type": "string",
+            "description": "Absolute path or URI"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 hash of artifact content"
+          }
+        }
+      }
+    },
+    "logs_ref": {
+      "type": "string",
+      "description": "Reference to execution logs (path, URI, or log system identifier)"
+    },
+    "rollback_executed": {
+      "type": "boolean",
+      "description": "Whether rollback was performed"
+    },
+    "rollback_details": {
       "type": "object",
-      "required": ["success", "result"],
+      "description": "Details about rollback if it was executed",
+      "additionalProperties": false,
       "properties": {
-        "success": { "type": "boolean" },
-        "result": { "type": "object" },
-        "errors": { "type": "array" }
+        "triggered_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "strategy_used": {
+          "type": "string",
+          "enum": ["compensating", "snapshot"]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "critic_verdict": {
+      "type": "string",
+      "enum": ["pass", "fail", "inconclusive"],
+      "description": "Automated validation verdict"
+    },
+    "critic_details": {
+      "type": "object",
+      "description": "Detailed validation results",
+      "additionalProperties": false,
+      "properties": {
+        "checks_performed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["check_name", "result"],
+            "properties": {
+              "check_name": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string",
+                "enum": ["pass", "fail", "skip"]
+              },
+              "details": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "overall_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence score for the verdict (0-1)"
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "description": "Errors encountered during execution",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "severity", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "error", "critical"]
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Error code if applicable"
+          },
+          "stack_trace": {
+            "type": "string",
+            "description": "Stack trace for debugging"
+          }
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "description": "Performance metrics",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total execution time in milliseconds"
+        },
+        "cpu_time_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "memory_peak_mb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "network_bytes_sent": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "network_bytes_received": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional context",
+      "additionalProperties": true,
+      "properties": {
+        "executor": {
+          "type": "string",
+          "description": "Agent or service that executed this run"
+        },
+        "environment": {
+          "type": "string",
+          "enum": ["development", "staging", "production"]
+        },
+        "correlation_id": {
+          "type": "string",
+          "description": "For tracing across multiple runs"
+        }
       }
     }
   }
