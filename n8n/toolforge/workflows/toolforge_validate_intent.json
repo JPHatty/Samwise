@@ -1,0 +1,255 @@
+{
+  "name": "ToolForge: Validate IntentSpec",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "toolforge-validate-intent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "validate-webhook",
+      "name": "Validate Webhook (DISABLED)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "disabled": true,
+      "notes": "RECEIVES: IntentSpec JSON payload\nPURPOSE: STRICT validation against intent-spec.schema.json\nOUTPUTS: Valid=true + normalized IntentSpec OR Valid=false + errors"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Load schema from file (mounted volume)\nconst fs = require('fs');\nconst path = require('path');\n\nconst schemaPath = '/home/node/.n8n/claude-flow/contracts/intent-spec.schema.json';\nlet schema;\n\ntry {\n  schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));\n} catch (error) {\n  return {\n    \"valid\": false,\n    \"error\": \"schema_load_failed\",\n    \"message\": \"Failed to load intent-spec.schema.json\",\n    \"details\": error.message\n  };\n}\n\nreturn {\n  \"schema\": schema,\n  \"intent\": $input.item.json\n};"
+      },
+      "id": "load-schema",
+      "name": "Load IntentSpec Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "SOURCE: claude-flow/contracts/intent-spec.schema.json\nMOUNT: /home/node/.n8n/claude-flow (read-only)\nERROR: If schema missing, halt immediately"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Validate using Ajv JSON Schema validator\nconst Ajv = require('ajv');\nconst ajv = new Ajv({\n  strict: true,\n  strictSchema: true,\n  strictTypes: true,\n  strictRequired: true,\n  removeAdditional: false,\n  useDefaults: false,\n  coerceTypes: false\n});\n\nconst schema = $input.item.json.schema;\nconst intent = $input.item.json.intent;\n\nconst validate = ajv.compile(schema);\nconst valid = validate(intent);\n\nif (valid) {\n  // PASS: All schema constraints satisfied\n  return {\n    \"valid\": true,\n    \"intent\": intent,\n    \"normalized\": intent // Ajv may apply defaults if configured\n  };\n} else {\n  // FAIL: Schema validation errors\n  return {\n    \"valid\": false,\n    \"error\": \"validation_failed\",\n    \"message\": \"IntentSpec does not conform to schema\",\n    \"errors\": validate.errors.map(err => ({\n      \"path\": err.instancePath || \"root\",\n      \"keyword\": err.keyword,\n      \"message\": err.message,\n      \"params\": err.params\n    }))\n  };\n}"
+      },
+      "id": "validate-schema",
+      "name": "Validate Against Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "VALIDATOR: Ajv (JSON Schema Draft-07)\nMODE: STRICT (no coercion, no defaults)\nFAIL: Halt on first error (allErrors: false)\nOUTPUT: valid=true OR valid=false with error array"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-valid",
+      "name": "Check Validation Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "IF valid=true: Proceed to constraint verification\nIF valid=false: Return 400 with errors"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Additional constraint checks beyond schema\nconst intent = $json.intent;\nconst issues = [];\n\n// Check: intent_id is valid UUID v4\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuidRegex.test(intent.intent_id)) {\n  issues.push({\n    \"field\": \"intent_id\",\n    \"constraint\": \"valid_uuid_v4\",\n    \"message\": \"intent_id must be a valid UUID v4\"\n  });\n}\n\n// Check: issued_at is RFC3339 and not in future\nconst issuedAt = new Date(intent.issued_at);\nif (isNaN(issuedAt.getTime())) {\n  issues.push({\n    \"field\": \"issued_at\",\n    \"constraint\": \"rfc3339\",\n    \"message\": \"issued_at must be valid RFC3339 timestamp\"\n  });\n} else if (issuedAt > new Date()) {\n  issues.push({\n    \"field\": \"issued_at\",\n    \"constraint\": \"not_future\",\n    \"message\": \"issued_at cannot be in the future\"\n  });\n}\n\n// Check: objective is not empty\nif (!intent.objective || intent.objective.trim().length === 0) {\n  issues.push({\n    \"field\": \"objective\",\n    \"constraint\": \"non_empty\",\n    \"message\": \"objective cannot be empty\"\n  });\n}\n\n// Check: forbidden_actions does not conflict with allowed_tools\nif (intent.allowed_tools && intent.allowed_tools.length > 0 && intent.forbidden_actions) {\n  // This is context-dependent, just warn\n  issues.push({\n    \"field\": \"constraints\",\n    \"constraint\": \"tool_conflict_check\",\n    \"message\": \"Both allowed_tools and forbidden_actions specified - verify no conflicts\",\n    \"severity\": \"warning\"\n  });\n}\n\nreturn {\n  \"valid\": issues.filter(i => i.severity !== \"warning\").length === 0,\n  \"intent\": intent,\n  \"issues\": issues,\n  \"passed\": issues.length === 0\n};"
+      },
+      "id": "verify-constraints",
+      "name": "Verify Additional Constraints",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200],
+      "notes": "CHECKS: UUID format, timestamp logic, constraint conflicts\nSEVERITY: Warning vs error (fatal)\nOUTPUT: valid, intent, issues array"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": false,\n  \"error\": \"constraint_violation\",\n  \"message\": \"IntentSpec failed additional constraint checks\",\n  \"errors\": $json.issues,\n  \"intent_id\": $json.intent.intent_id || null\n};"
+      },
+      "id": "constraint-fail",
+      "name": "Constraint Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400],
+      "notes": "HALT: Constraint violations are non-recoverable\nRETURN: 400 with specific issues\nEMIT: RunRecord (failure)"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": true,\n  \"intent\": $json.intent,\n  \"message\": \"IntentSpec validated successfully\",\n  \"validation_level\": $json.intent.validation_level || \"normal\",\n  \"warnings\": $json.issues.filter(i => i.severity === \"warning\")\n};"
+      },
+      "id": "validation-pass",
+      "name": "Validation Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200],
+      "notes": "PASS: IntentSpec is valid and ready for ToolSpec generation\nEMIT: RunRecord (validation_success)\nRETURN: 200 with validated IntentSpec"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": false,\n  \"error\": \"schema_validation_failed\",\n  \"message\": $json.message,\n  \"errors\": $json.errors,\n  \"intent_id\": $json.intent?.intent_id || null\n};"
+      },
+      "id": "schema-fail",
+      "name": "Schema Validation Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400],
+      "notes": "HALT: Schema violations are non-recoverable\nRETURN: 400 with validation errors\nEMIT: RunRecord (failure)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.valid ? 200 : 400 }}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 300],
+      "notes": "RETURN: 200 on success, 400 on failure\nBODY: { valid, intent?, errors? }\nHEADERS: x-intent-id echoed"
+    }
+  ],
+  "connections": {
+    "Validate Webhook (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "Load IntentSpec Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load IntentSpec Schema": {
+      "main": [
+        [
+          {
+            "node": "Validate Against Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Against Schema": {
+      "main": [
+        [
+          {
+            "node": "Check Validation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Validation Result": {
+      "main": [
+        [
+          {
+            "node": "Verify Additional Constraints",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schema Validation Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Additional Constraints": {
+      "main": [
+        [
+          {
+            "node": "Validation Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Constraint Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Constraint Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Success": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schema Validation Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "toolforge_fail_and_log.json"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "validation",
+      "name": "Validation"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

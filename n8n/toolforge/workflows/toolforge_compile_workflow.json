@@ -1,0 +1,208 @@
+{
+  "name": "ToolForge: Compile Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "toolforge-compile-workflow",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "compile-webhook",
+      "name": "Compile Webhook (DISABLED)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "disabled": true,
+      "notes": "RECEIVES: Validated ToolSpec + original Intent\nPURPOSE: Translate ToolSpec → n8n workflow JSON\nOUTPUTS: Compiled workflow JSON (ready for registration)"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const toolspec = $input.item.json.toolspec;\nconst intent = $input.item.json.intent;\n\n// Generate n8n workflow skeleton from ToolSpec\nconst workflow = {\n  \"name\": toolspec.tool_id,\n  \"nodes\": [],\n  \"connections\": {},\n  \"settings\": {\n    \"executionOrder\": \"v1\",\n    \"saveManualExecutions\": true,\n    \"callerPolicy\": \"workflowsFromSameOwner\",\n    \"errorWorkflow\": \"toolforge_fail_and_log.json\"\n  },\n  \"staticData\": null,\n  \"tags\": [\n    {\n      \"id\": \"toolforge\",\n      \"name\": \"ToolForge\"\n    },\n    {\n      \"id\": toolspec.version,\n      \"name\": toolspec.version\n    },\n    {\n      \"id\": toolspec.resource_class,\n      \"name\": toolspec.resource_class\n    },\n    {\n      \"id\": toolspec.execution_mode,\n      \"name\": toolspec.execution_mode\n    }\n  ],\n  \"triggerCount\": 0,\n  \"updatedAt\": new Date().toISOString(),\n  \"versionId\": toolspec.version\n};\n\n// Add webhook trigger node (disabled by default)\nconst webhookNode = {\n  \"parameters\": {\n    \"httpMethod\": \"POST\",\n    \"path\": toolspec.tool_id,\n    \"responseMode\": \"responseNode\",\n    \"options\": {}\n  },\n  \"id\": \"trigger-webhook\",\n  \"name\": `${toolspec.tool_id}-trigger (DISABLED)`,\n  \"type\": \"n8n-nodes-base.webhook\",\n  \"typeVersion\": 1.1,\n  \"position\": [240, 300],\n  \"webhookId\": \"\",\n  \"disabled\": true,\n  \"notes\": `TRIGGER: Webhook for ${toolspec.tool_id}\\nVALIDATION: Enforces input_schema\\nEXECUTION: ${toolspec.execution_mode}\\nTIMEOUT: ${toolspec.timeout_seconds}s`\n};\n\nworkflow.nodes.push(webhookNode);\n\n// Mark execution boundary\nconst boundaryNode = {\n  \"parameters\": {\n    \"jsonCode\": `// EXECUTION BOUNDARY\\n// Mode: ${toolspec.execution_mode}\\n// Resource Class: ${toolspec.resource_class}\\nreturn {\\n  \"mode\": \"${toolspec.execution_mode}\",\\n  \"tool_id\": \"${toolspec.tool_id}\",\\n  \"timestamp\": new Date().toISOString()\\n};`\n  },\n  \"id\": \"execution-boundary\",\n  \"name\": `EXECUTION: ${toolspec.execution_mode.toUpperCase()}`,\n  \"type\": \"n8n-nodes-base.code\",\n  \"typeVersion\": 2,\n  \"position\": [460, 300],\n  \"notes\": toolspec.execution_mode === \"remote\" \n    ? \"REMOTE: HTTP request to external service\"\n    : \"LOCAL: Execute within n8n container\"\n};\n\nworkflow.nodes.push(boundaryNode);\n\nworkflow.connections[webhookNode.id] = {\n  \"main\": [[{\"node\": boundaryNode.id, \"type\": \"main\", \"index\": 0}]]\n};\n\n// Add credential placeholder node (no actual credentials)\nif (toolspec.credentials_required && toolspec.credentials_required.length > 0) {\n  const credsNode = {\n    \"parameters\": {\n      \"jsonCode\": `// CREDENTIAL DECLARATION ONLY\\n// IDs (not secrets): ${toolspec.credentials_required.join(\", \")}\\nreturn {\\n  \"credential_ids\": ${JSON.stringify(toolspec.credentials_required)},\\n  \"note\": \"Credentials injected via n8n credential system at runtime\"\\n};`\n    },\n    \"id\": \"credential-declaration\",\n    \"name\": \"Credentials: BY REFERENCE ONLY\",\n    \"type\": \"n8n-nodes-base.code\",\n    \"typeVersion\": 2,\n    \"position\": [680, 300],\n    \"notes\": \"CREDENTIALS: Reference by ID only\\nNO SECRETS: Never inline credentials in workflow\"\n  };\n  \n  workflow.nodes.push(credsNode);\n  workflow.connections[boundaryNode.id] = {\n    \"main\": [[{\"node\": credsNode.id, \"type\": \"main\", \"index\": 0}]]\n  };\n}\n\nreturn {\n  \"toolspec\": toolspec,\n  \"intent\": intent,\n  \"workflow\": workflow,\n  \"compilation_timestamp\": new Date().toISOString()\n};"
+      },
+      "id": "generate-skeleton",
+      "name": "Generate Workflow Skeleton",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "TRANSLATE: ToolSpec → n8n workflow JSON\nSTRUCTURE: Webhook trigger + execution nodes\nDISABLE: All triggers disabled by default\nCREDENTIALS: IDs only, no secrets"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const workflow = $json.workflow;\nconst toolspec = $json.toolspec;\nconst errors = [];\n\n// Verify: All nodes have required fields\nfor (const node of workflow.nodes) {\n  if (!node.id || !node.name || !node.type) {\n    errors.push({\n      \"node\": node.id || \"unknown\",\n      \"error\": \"missing_required_fields\",\n      \"message\": \"Node must have id, name, and type\"\n    });\n  }\n  \n  // Verify: Only valid n8n node types\n  const validTypes = [\n    \"n8n-nodes-base.webhook\",\n    \"n8n-nodes-base.code\",\n    \"n8n-nodes-base.httpRequest\",\n    \"n8n-nodes-base.if\",\n    \"n8n-nodes-base.switch\",\n    \"n8n-nodes-base.respondToWebhook\",\n    \"@n8n/n8n-nodes-langchain.requestLlm\"\n  ];\n  \n  if (!validTypes.includes(node.type)) {\n    errors.push({\n      \"node\": node.id,\n      \"error\": \"invalid_node_type\",\n      \"message\": `Unknown node type: ${node.type}`\n    });\n  }\n}\n\n// Verify: No credentials inlined\nconst workflowStr = JSON.stringify(workflow);\nconst forbiddenPatterns = [\n  /\"password\"\\s*:\\s*\"[^\"]+\"/i,\n  /\"token\"\\s*:\\s*\"[^\"]+\"/i,\n  /\"secret\"\\s*:\\s*\"[^\"]+\"/i,\n  /\"api_key\"\\s*:\\s*\"[^\"]+\"/i\n];\n\nfor (const pattern of forbiddenPatterns) {\n  if (pattern.test(workflowStr)) {\n    errors.push({\n      \"error\": \"credentials_inlined\",\n      \"message\": \"Workflow contains inlined credentials (FORBIDDEN)\",\n      \"severity\": \"critical\"\n    });\n    break;\n  }\n}\n\n// Verify: Execution mode marked\nconst boundaryNode = workflow.nodes.find(n => n.id === \"execution-boundary\");\nif (!boundaryNode) {\n  errors.push({\n    \"error\": \"missing_execution_boundary\",\n    \"message\": \"Workflow must declare execution boundary\"\n  });\n}\n\nreturn {\n  \"valid\": errors.filter(e => e.severity !== \"warning\").length === 0,\n  \"workflow\": workflow,\n  \"toolspec\": toolspec,\n  \"intent\": $json.intent,\n  \"errors\": errors\n};"
+      },
+      "id": "verify-compilation",
+      "name": "Verify Compilation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "VERIFY: All nodes have required fields\nVERIFY: Only valid n8n node types used\nVERIFY: No credentials inlined\nVERIFY: Execution boundary marked\nOUTPUT: valid=true OR errors array"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-compilation",
+      "name": "Check Compilation Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "IF valid=true: Proceed to registration\nIF valid=false: Return 500 with compilation errors"
+    },
+    {
+      "parameters": {
+        "url": "=http://n8n:5678/webhook/toolforge-register-tool",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { workflow: $json.workflow, toolspec: $json.toolspec, intent: $json.intent } }}",
+        "options": {}
+      },
+      "id": "call-register-tool",
+      "name": "Call Register Tool (INTERNAL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "notes": "TARGET: Internal n8n workflow\nEXECUTION: LOCAL\nPURPOSE: Register workflow in tool registry\nTIMEOUT: 30 seconds"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": false,\n  \"error\": \"compilation_failed\",\n  \"message\": \"Workflow compilation failed validation\",\n  \"errors\": $json.errors,\n  \"intent_id\": $json.intent?.intent_id || null,\n  \"tool_id\": $json.toolspec?.tool_id || null\n};"
+      },
+      "id": "compilation-fail",
+      "name": "Compilation Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400],
+      "notes": "HALT: Compilation errors are non-recoverable\nRETURN: 500 with error details\nEMIT: RunRecord (failure)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.valid || $json.registered ? 200 : 500 }}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300],
+      "notes": "RETURN: 200 on success, 500 on failure\nBODY: { valid, workflow?, registered?, errors? }\nHEADERS: x-intent-id, x-tool-id echoed"
+    }
+  ],
+  "connections": {
+    "Compile Webhook (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "Generate Workflow Skeleton",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Workflow Skeleton": {
+      "main": [
+        [
+          {
+            "node": "Verify Compilation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Compilation": {
+      "main": [
+        [
+          {
+            "node": "Check Compilation Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Compilation Valid": {
+      "main": [
+        [
+          {
+            "node": "Call Register Tool (INTERNAL)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compilation Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Register Tool (INTERNAL)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compilation Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "toolforge_fail_and_log.json"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "compilation",
+      "name": "Compilation"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

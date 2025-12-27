@@ -1,0 +1,168 @@
+{
+  "name": "ToolForge: Register Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "toolforge-register-tool",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "register-webhook",
+      "name": "Register Webhook (DISABLED)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "disabled": true,
+      "notes": "RECEIVES: Compiled workflow + ToolSpec + Intent\nPURPOSE: Register tool in registry, write workflow file\nOUTPUTS: Registration confirmation with tool_id"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const fs = require('fs');\nconst path = require('path');\n\nconst workflow = $input.item.json.workflow;\nconst toolspec = $input.item.json.toolspec;\n\n// Target path for workflow file\nconst workflowDir = '/home/node/.n8n/workflows/toolforge/';\nconst workflowFile = path.join(workflowDir, `${toolspec.tool_id}.json`);\n\n// Ensure directory exists\nif (!fs.existsSync(workflowDir)) {\n  try {\n    fs.mkdirSync(workflowDir, { recursive: true });\n  } catch (error) {\n    return {\n      \"success\": false,\n      \"error\": \"directory_create_failed\",\n      \"message\": `Failed to create workflow directory: ${workflowDir}`,\n      \"details\": error.message\n    };\n  }\n}\n\n// Write workflow file\ntry {\n  fs.writeFileSync(workflowFile, JSON.stringify(workflow, null, 2), 'utf8');\n} catch (error) {\n  return {\n    \"success\": false,\n    \"error\": \"file_write_failed\",\n    \"message\": `Failed to write workflow file: ${workflowFile}`,\n    \"details\": error.message\n  };\n}\n\nreturn {\n  \"success\": true,\n  \"workflow_file\": workflowFile,\n  \"toolspec\": toolspec,\n  \"intent\": $input.item.json.intent,\n  \"registered_at\": new Date().toISOString()\n};"
+      },
+      "id": "write-workflow-file",
+      "name": "Write Workflow File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "PATH: /home/node/.n8n/workflows/toolforge/{tool_id}.json\nMOUNT: n8n/workflows volume (read-write)\nFAIL: If write fails, halt\nPASS: File written successfully"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const crypto = require('crypto');\n\nconst toolspec = $json.toolspec;\nconst intent = $json.intent;\n\n// Generate run_id (UUID v4)\nconst run_id = crypto.randomUUID();\n\n// Generate inputs_hash (SHA-256 placeholder)\nconst inputs_str = JSON.stringify({ intent, toolspec });\nconst inputs_hash = crypto.createHash('sha256').update(inputs_str).digest('hex');\n\n// Create base RunRecord\nconst runRecord = {\n  \"run_id\": run_id,\n  \"intent_id\": intent.intent_id,\n  \"tool_id\": toolspec.tool_id,\n  \"tool_version\": toolspec.version,\n  \"started_at\": new Date().toISOString(),\n  \"finished_at\": new Date().toISOString(),\n  \"status\": \"success\",\n  \"inputs_hash\": inputs_hash,\n  \"outputs_hash\": crypto.createHash('sha256').update($json.workflow_file).digest('hex'),\n  \"artifacts\": [\n    {\n      \"type\": \"file\",\n      \"location\": $json.workflow_file,\n      \"created_at\": new Date().toISOString(),\n      \"hash\": crypto.createHash('sha256').update(JSON.stringify(toolspec)).digest('hex')\n    },\n    {\n      \"type\": \"configuration\",\n      \"location\": `/home/node/.n8n/workflows/toolforge/${toolspec.tool_id}.json`,\n      \"created_at\": new Date().toISOString()\n    }\n  ],\n  \"logs_ref\": `toolforge-${run_id}`,\n  \"rollback_executed\": false,\n  \"critic_verdict\": \"pass\",\n  \"critic_details\": {\n    \"checks_performed\": [\n      { \"check_name\": \"intent_validation\", \"result\": \"pass\" },\n      { \"check_name\": \"toolspec_validation\", \"result\": \"pass\" },\n      { \"check_name\": \"workflow_compilation\", \"result\": \"pass\" },\n      { \"check_name\": \"file_write\", \"result\": \"pass\" }\n    ],\n    \"overall_score\": 1.0\n  },\n  \"performance\": {\n    \"duration_ms\": 0,\n    \"cpu_time_ms\": 0,\n    \"memory_peak_mb\": 0\n  },\n  \"metadata\": {\n    \"executor\": \"toolforge\",\n    \"environment\": \"development\",\n    \"registration_type\": \"success\"\n  }\n};\n\nreturn {\n  \"run_record\": runRecord,\n  \"toolspec\": toolspec,\n  \"intent\": intent,\n  \"workflow_file\": $json.workflow_file\n};"
+      },
+      "id": "create-run-record",
+      "name": "Create RunRecord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "CREATE: RunRecord for successful registration\nSTATUS: success\nCRITIC: pass (all checks passed)\nARTIFACTS: workflow file, ToolSpec\nOUTPUT: Complete RunRecord object"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const fs = require('fs');\nconst path = require('path');\n\nconst runRecord = $json.run_record;\n\n// Run records directory\nconst recordsDir = '/home/node/.n8n/data/run-records/';\n\n// Ensure directory exists\nif (!fs.existsSync(recordsDir)) {\n  fs.mkdirSync(recordsDir, { recursive: true });\n}\n\n// Write run record (append-only)\nconst recordFile = path.join(recordsDir, `${runRecord.run_id}.json`);\n\ntry {\n  fs.writeFileSync(recordFile, JSON.stringify(runRecord, null, 2), 'utf8');\n} catch (error) {\n  return {\n    \"success\": false,\n    \"error\": \"run_record_write_failed\",\n    \"message\": \"Failed to write RunRecord\",\n    \"details\": error.message,\n    \"run_id\": runRecord.run_id\n  };\n}\n\n// Also append to index\nconst indexFile = path.join(recordsDir, 'index.jsonl');\nconst indexEntry = JSON.stringify({\n  run_id: runRecord.run_id,\n  intent_id: runRecord.intent_id,\n  tool_id: runRecord.tool_id,\n  status: runRecord.status,\n  critic_verdict: runRecord.critic_verdict,\n  timestamp: runRecord.finished_at\n});\n\ntry {\n  fs.appendFileSync(indexFile, indexEntry + '\\n', 'utf8');\n} catch (error) {\n  // Non-fatal: log but continue\n  console.error(`Failed to append to index: ${error.message}`);\n}\n\nreturn {\n  \"success\": true,\n  \"run_record\": runRecord,\n  \"run_record_file\": recordFile,\n  \"toolspec\": $json.toolspec,\n  \"intent\": $json.intent,\n  \"workflow_file\": $json.workflow_file\n};"
+      },
+      "id": "write-run-record",
+      "name": "Write RunRecord (Append-Only)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "PATH: /home/node/.n8n/data/run-records/{run_id}.json\nINDEX: Append to index.jsonl\nMODE: Append-only (no mutation)\nFAIL: Log error but continue (non-fatal)"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const fs = require('fs');\nconst path = require('path');\n\nconst toolspec = $json.toolspec;\n\n// Registry path\nconst registryFile = '/home/node/.n8n/data/tool-registry.json';\n\n// Load existing registry or create new\nlet registry = { tools: [], last_updated: null };\n\nif (fs.existsSync(registryFile)) {\n  try {\n    registry = JSON.parse(fs.readFileSync(registryFile, 'utf8'));\n  } catch (error) {\n    console.error(`Failed to load registry: ${error.message}`);\n  }\n}\n\n// Check if tool already exists\nconst existingIndex = registry.tools.findIndex(t => t.tool_id === toolspec.tool_id);\n\nconst registryEntry = {\n  \"tool_id\": toolspec.tool_id,\n  \"version\": toolspec.version,\n  \"description\": toolspec.description,\n  \"execution_mode\": toolspec.execution_mode,\n  \"resource_class\": toolspec.resource_class,\n  \"rollback_strategy\": toolspec.rollback_strategy,\n  \"timeout_seconds\": toolspec.timeout_seconds,\n  \"credentials_required\": toolspec.credentials_required || [],\n  \"side_effects\": toolspec.side_effects || [],\n  \"registered_at\": new Date().toISOString(),\n  \"active\": true,\n  \"workflow_file\": $json.workflow_file,\n  \"registered_by\": \"toolforge\"\n};\n\nif (existingIndex >= 0) {\n  // Update existing (deactivate old version)\n  registry.tools[existingIndex].active = false;\n  registry.tools[existingIndex].deactivated_at = new Date().toISOString();\n  registry.tools[existingIndex].deactivated_reason = \"version_update\";\n  // Add new version\n  registry.tools.push(registryEntry);\n} else {\n  // New tool\n  registry.tools.push(registryEntry);\n}\n\nregistry.last_updated = new Date().toISOString();\n\n// Write registry\ntry {\n  fs.writeFileSync(registryFile, JSON.stringify(registry, null, 2), 'utf8');\n} catch (error) {\n  return {\n    \"success\": false,\n    \"error\": \"registry_write_failed\",\n    \"message\": \"Failed to write tool registry\",\n    \"details\": error.message\n  };\n}\n\nreturn {\n  \"registered\": true,\n  \"tool_id\": toolspec.tool_id,\n  \"version\": toolspec.version,\n  \"registry_entry\": registryEntry,\n  \"is_update\": existingIndex >= 0,\n  \"run_record\": $json.run_record,\n  \"intent_id\": $json.intent.intent_id\n};"
+      },
+      "id": "update-registry",
+      "name": "Update Tool Registry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "notes": "PATH: /home/node/.n8n/data/tool-registry.json\nMODE: Read-modify-write (with file lock in prod)\nUPDATE: Deactivate old versions on version change\nOUTPUT: registration confirmation"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.registered || $json.success ? 200 : 500 }}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300],
+      "notes": "RETURN: 200 on success, 500 on failure\nBODY: { registered, tool_id, version, run_record }\nHEADERS: x-intent-id, x-tool-id, x-run-id"
+    }
+  ],
+  "connections": {
+    "Register Webhook (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "Write Workflow File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Workflow File": {
+      "main": [
+        [
+          {
+            "node": "Create RunRecord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create RunRecord": {
+      "main": [
+        [
+          {
+            "node": "Write RunRecord (Append-Only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write RunRecord (Append-Only)": {
+      "main": [
+        [
+          {
+            "node": "Update Tool Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Tool Registry": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "toolforge_fail_and_log.json"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "registration",
+      "name": "Registration"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

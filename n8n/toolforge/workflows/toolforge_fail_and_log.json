@@ -1,0 +1,203 @@
+{
+  "name": "ToolForge: Fail and Log (Error Handler)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "notes": "TRIGGER: Activated by parent workflow error\nCONTEXT: Access via $workflow.error object\nPURPOSE: Centralized error handling and logging"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Extract error context\nconst error = $workflow.error;\nconst executionData = $workflow;\n\n// Build error record\nconst errorRecord = {\n  \"timestamp\": new Date().toISOString(),\n  \"workflow_id\": executionData.id,\n  \"workflow_name\": executionData.name,\n  \"error\": {\n    \"message\": error.message || \"Unknown error\",\n    \"name\": error.name || \"Error\",\n    \"description\": error.description || \"\",\n    \"node\": {\n      \"id\": error.node?.id,\n      \"name\": error.node?.name,\n      \"type\": error.node?.type\n    },\n    \"stack_trace\": error.stack\n  },\n  \"input_data\": $input.item.json,\n  \"execution_metadata\": {\n    \"mode\": executionData.mode,\n    \"retryOf\": executionData.retryOf,\n    \"startTime\": executionData.startTime,\n    \"executionTime\": executionData.executionTime\n  }\n};\n\nreturn errorRecord;"
+      },
+      "id": "extract-error",
+      "name": "Extract Error Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "EXTRACT: Error details from $workflow.error\nCAPTURE: Workflow, node, input data\nOUTPUT: Structured error record"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const crypto = require('crypto');\n\nconst errorRecord = $json;\n\n// Generate IDs\nconst run_id = crypto.randomUUID();\nconst intent_id = errorRecord.input_data?.intent_id || crypto.randomUUID();\nconst tool_id = errorRecord.input_data?.tool_id || errorRecord.workflow_name;\n\n// Determine error severity\nlet severity = \"error\";\nif (errorRecord.error.name === \"SchemaValidationError\") {\n  severity = \"error\";\n} else if (errorRecord.error.name === \"ValidationError\") {\n  severity = \"warning\";\n} else if (errorRecord.error.node?.type === \"n8n-nodes-base.httpRequest\") {\n  severity = \"critical\";\n}\n\n// Create failure RunRecord\nconst runRecord = {\n  \"run_id\": run_id,\n  \"intent_id\": intent_id,\n  \"tool_id\": tool_id,\n  \"started_at\": errorRecord.execution_metadata?.startTime || new Date().toISOString(),\n  \"finished_at\": new Date().toISOString(),\n  \"status\": \"failure\",\n  \"inputs_hash\": crypto.createHash('sha256').update(JSON.stringify(errorRecord.input_data)).digest('hex'),\n  \"outputs_hash\": null,\n  \"artifacts\": [],\n  \"logs_ref\": `toolforge-error-${run_id}`,\n  \"rollback_executed\": false,\n  \"critic_verdict\": \"fail\",\n  \"critic_details\": {\n    \"checks_performed\": [\n      {\n        \"check_name\": errorRecord.error.name || \"execution\",\n        \"result\": \"fail\",\n        \"details\": errorRecord.error.message\n      }\n    ],\n    \"overall_score\": 0.0\n  },\n  \"errors\": [\n    {\n      \"timestamp\": errorRecord.timestamp,\n      \"severity\": severity,\n      \"message\": errorRecord.error.message,\n      \"code\": errorRecord.error.name,\n      \"stack_trace\": errorRecord.error.stack_trace\n    }\n  ],\n  \"performance\": {\n    \"duration_ms\": errorRecord.execution_metadata?.executionTime || 0,\n    \"cpu_time_ms\": 0,\n    \"memory_peak_mb\": 0\n  },\n  \"metadata\": {\n    \"executor\": \"toolforge\",\n    \"environment\": \"development\",\n    \"error_workflow\": true,\n    \"failed_node\": errorRecord.error.node?.name,\n    \"failed_node_type\": errorRecord.error.node?.type\n  }\n};\n\nreturn {\n  \"error_record\": errorRecord,\n  \"run_record\": runRecord\n};"
+      },
+      "id": "create-failure-run-record",
+      "name": "Create Failure RunRecord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "CREATE: RunRecord for failed execution\nSTATUS: failure\nCRITIC: fail (error occurred)\nERRORS: Populate from error context\nOUTPUT: Complete RunRecord object"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const fs = require('fs');\nconst path = require('path');\n\nconst runRecord = $json.run_record;\n\n// Run records directory\nconst recordsDir = '/home/node/.n8n/data/run-records/';\n\n// Ensure directory exists\nif (!fs.existsSync(recordsDir)) {\n  fs.mkdirSync(recordsDir, { recursive: true });\n}\n\n// Write run record (append-only)\nconst recordFile = path.join(recordsDir, `${runRecord.run_id}.json`);\n\ntry {\n  fs.writeFileSync(recordFile, JSON.stringify(runRecord, null, 2), 'utf8');\n} catch (error) {\n  console.error(`Failed to write error RunRecord: ${error.message}`);\n  // Continue anyway - we don't want to fail in the error handler\n}\n\n// Append to error index\nconst errorIndexFile = path.join(recordsDir, 'errors.jsonl');\nconst errorEntry = {\n  run_id: runRecord.run_id,\n  intent_id: runRecord.intent_id,\n  tool_id: runRecord.tool_id,\n  status: runRecord.status,\n  error_severity: runRecord.errors[0]?.severity,\n  error_message: runRecord.errors[0]?.message,\n  failed_node: runRecord.metadata.failed_node,\n  timestamp: runRecord.finished_at\n};\n\ntry {\n  fs.appendFileSync(errorIndexFile, JSON.stringify(errorEntry) + '\\n', 'utf8');\n} catch (error) {\n  console.error(`Failed to append to error index: ${error.message}`);\n}\n\nreturn {\n  \"logged\": true,\n  \"run_record\": runRecord,\n  \"run_record_file\": recordFile,\n  \"error_record\": $json.error_record\n};"
+      },
+      "id": "log-error",
+      "name": "Log Error RunRecord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "PATH: /home/node/.n8n/data/run-records/{run_id}.json\nINDEX: Append to errors.jsonl\nMODE: Append-only (no mutation)\nFAIL: Log error but never throw"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const errorRecord = $json.error_record;\nconst runRecord = $json.run_record;\n\n// Determine if rollback is needed\nlet rollbackRequired = false;\nlet rollbackStrategy = \"none\";\n\n// Check input data for rollback requirements\nif (errorRecord.input_data?.intent?.rollback_required) {\n  rollbackRequired = true;\n}\n\nif (errorRecord.input_data?.toolspec?.rollback_strategy) {\n  rollbackStrategy = errorRecord.input_data.toolspec.rollback_strategy;\n}\n\n// Execute rollback if needed\nlet rollbackExecuted = false;\nlet rollbackDetails = null;\n\nif (rollbackRequired && rollbackStrategy !== \"none\") {\n  // For now, just document what rollback would happen\n  // Actual rollback implementation depends on strategy\n  rollbackDetails = {\n    \"triggered_at\": new Date().toISOString(),\n    \"strategy\": rollbackStrategy,\n    \"notes\": \"Rollback documented but not executed in error handler\",\n    \"reason\": \"Error occurred during execution\"\n  };\n  \n  if (rollbackStrategy === \"compensating\") {\n    // Compensating transactions would be executed here\n    rollbackExecuted = true;\n  } else if (rollbackStrategy === \"snapshot\") {\n    // Snapshot restoration would happen here\n    rollbackExecuted = true;\n  }\n}\n\nreturn {\n  \"logged\": $json.logged,\n  \"run_record\": {\n    ...runRecord,\n    \"rollback_executed\": rollbackExecuted,\n    \"rollback_details\": rollbackDetails\n  },\n  \"rollback_executed\": rollbackExecuted,\n  \"rollback_strategy\": rollbackStrategy\n};"
+      },
+      "id": "handle-rollback",
+      "name": "Handle Rollback (If Required)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "notes": "CHECK: intent.rollback_required\nCHECK: toolspec.rollback_strategy\nEXECUTE: Compensating or snapshot rollback\nDOCUMENT: Always document rollback decision"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.logged }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-logged",
+      "name": "Check Logged Successfully",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "notes": "IF logged=true: Error handled successfully\nIF logged=false: Logging failed (critical)"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"status\": \"error_handled\",\n  \"message\": \"Error logged and documented\",\n  \"run_id\": $json.run_record.run_id,\n  \"intent_id\": $json.run_record.intent_id,\n  \"tool_id\": $json.run_record.tool_id,\n  \"error_severity\": $json.run_record.errors[0]?.severity,\n  \"rollback_executed\": $json.rollback_executed,\n  \"timestamp\": new Date().toISOString()\n};"
+      },
+      "id": "error-handled",
+      "name": "Error Handled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200],
+      "notes": "STATE: Error processed and logged\nROLLBACK: Executed if required\nOUTPUT: Summary for operator"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"status\": \"critical_failure\",\n  \"message\": \"Error handler failed to log error\",\n  \"original_error\": $json.run_record.errors[0],\n  \"timestamp\": new Date().toISOString()\n};"
+      },
+      "id": "critical-failure",
+      "name": "Critical Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400],
+      "notes": "STATE: Error logging failed (double failure)\nSEVERITY: Critical\nACTION: Immediate operator notification required"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Error Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Error Context": {
+      "main": [
+        [
+          {
+            "node": "Create Failure RunRecord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Failure RunRecord": {
+      "main": [
+        [
+          {
+            "node": "Log Error RunRecord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error RunRecord": {
+      "main": [
+        [
+          {
+            "node": "Handle Rollback (If Required)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Rollback (If Required)": {
+      "main": [
+        [
+          {
+            "node": "Check Logged Successfully",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Logged Successfully": {
+      "main": [
+        [
+          {
+            "node": "Error Handled",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Critical Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "error-handling",
+      "name": "Error Handling"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

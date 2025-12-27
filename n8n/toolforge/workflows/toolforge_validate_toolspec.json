@@ -1,0 +1,255 @@
+{
+  "name": "ToolForge: Validate ToolSpec",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "toolforge-validate-toolspec",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "validate-toolspec-webhook",
+      "name": "Validate ToolSpec Webhook (DISABLED)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "disabled": true,
+      "notes": "RECEIVES: Generated ToolSpec + original Intent\nPURPOSE: STRICT validation against tool-spec.schema.json\nOUTPUTS: Valid=true OR Valid=false with errors"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Load schema from file\nconst fs = require('fs');\nconst path = require('path');\n\nconst schemaPath = '/home/node/.n8n/claude-flow/contracts/tool-spec.schema.json';\nlet schema;\n\ntry {\n  schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));\n} catch (error) {\n  return {\n    \"valid\": false,\n    \"error\": \"schema_load_failed\",\n    \"message\": \"Failed to load tool-spec.schema.json\",\n    \"details\": error.message\n  };\n}\n\nreturn {\n  \"schema\": schema,\n  \"toolspec\": $input.item.json.toolspec,\n  \"intent\": $input.item.json.intent\n};"
+      },
+      "id": "load-toolspec-schema",
+      "name": "Load ToolSpec Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "SOURCE: claude-flow/contracts/tool-spec.schema.json\nMOUNT: /home/node/.n8n/claude-flow (read-only)\nERROR: If schema missing, halt immediately"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Validate using Ajv\nconst Ajv = require('ajv');\nconst ajv = new Ajv({\n  strict: true,\n  strictSchema: true,\n  strictTypes: true,\n  strictRequired: true,\n  removeAdditional: false,\n  useDefaults: false,\n  coerceTypes: false\n});\n\nconst schema = $input.item.json.schema;\nconst toolspec = $input.item.json.toolspec;\n\nconst validate = ajv.compile(schema);\nconst valid = validate(toolspec);\n\nif (valid) {\n  return {\n    \"valid\": true,\n    \"toolspec\": toolspec,\n    \"intent\": $input.item.json.intent\n  };\n} else {\n  return {\n    \"valid\": false,\n    \"error\": \"schema_validation_failed\",\n    \"message\": \"ToolSpec does not conform to schema\",\n    \"errors\": validate.errors.map(err => ({\n      \"path\": err.instancePath || \"root\",\n      \"keyword\": err.keyword,\n      \"message\": err.message,\n      \"params\": err.params\n    }))\n  };\n}"
+      },
+      "id": "validate-toolspec-schema",
+      "name": "Validate ToolSpec Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "VALIDATOR: Ajv (JSON Schema Draft-07)\nMODE: STRICT (no coercion, no defaults)\nFAIL: Halt on first error\nOUTPUT: valid=true OR valid=false with error array"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-toolspec-valid",
+      "name": "Check ToolSpec Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "IF valid=true: Verify against Intent constraints\nIF valid=false: Return 400 with schema errors"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Cross-validate ToolSpec against original Intent\nconst toolspec = $json.toolspec;\nconst intent = $json.intent;\nconst issues = [];\n\n// Check: ToolSpec execution_mode aligns with intent\nif (intent.validation_level === \"strict\") {\n  // In strict mode, remote execution is preferred for compute-heavy operations\n  if (toolspec.execution_mode === \"local\" && toolspec.resource_class === \"compute\") {\n    issues.push({\n      \"field\": \"execution_mode\",\n      \"constraint\": \"strict_compute_remote\",\n      \"message\": \"Strict mode: compute tools should be remote\",\n      \"severity\": \"warning\"\n    });\n  }\n}\n\n// Check: Rollback strategy matches intent requirement\nif (intent.rollback_required && toolspec.rollback_strategy === \"none\") {\n  issues.push({\n    \"field\": \"rollback_strategy\",\n    \"constraint\": \"rollback_required\",\n    \"message\": \"Intent requires rollback but ToolSpec has none\",\n    \"severity\": \"error\"\n  });\n}\n\n// Check: No forbidden actions in side_effects\nif (intent.forbidden_actions && toolspec.side_effects) {\n  const actionMap = {\n    \"delete_data\": \"file_delete\",\n    \"modify_production\": \"state_mutation\",\n    \"external_network_call\": \"network_request\",\n    \"install_dependencies\": \"state_mutation\",\n    \"modify_system_config\": \"state_mutation\",\n    \"create_user_accounts\": \"database_write\",\n    \"grant_permissions\": \"database_write\",\n    \"disable_security\": \"state_mutation\"\n  };\n\n  for (const forbidden of intent.forbidden_actions) {\n    const mappedEffect = actionMap[forbidden];\n    if (mappedEffect && toolspec.side_effects.some(se => se.effect_type === mappedEffect)) {\n      issues.push({\n        \"field\": \"side_effects\",\n        \"constraint\": \"forbidden_action\",\n        \"message\": `ToolSpec includes forbidden action: ${forbidden}`,\n        \"severity\": \"error\",\n        \"forbidden_action\": forbidden\n      });\n    }\n  }\n}\n\n// Check: ToolSpec outputs satisfy intent.required_outputs\nif (intent.required_outputs && intent.required_outputs.length > 0) {\n  // This is a heuristic check - full validation would require schema matching\n  const outputTypes = toolspec.output_schema?.properties || {};\n  const missing = [];\n  \n  for (const required of intent.required_outputs) {\n    if (!Object.keys(outputTypes).includes(required.artifact_type)) {\n      missing.push(required.artifact_type);\n    }\n  }\n  \n  if (missing.length > 0) {\n    issues.push({\n      \"field\": \"output_schema\",\n      \"constraint\": \"required_outputs\",\n      \"message\": `ToolSpec may not produce required outputs: ${missing.join(\", \")}`,\n      \"severity\": \"warning\"\n    });\n  }\n}\n\n// Check: Credentials are IDs only (no secrets)\nif (toolspec.credentials_required) {\n  const credentialIdPattern = /^[A-Z0-9_]+$/;\n  for (const cred of toolspec.credentials_required) {\n    if (!credentialIdPattern.test(cred)) {\n      issues.push({\n        \"field\": \"credentials_required\",\n        \"constraint\": \"credential_id_only\",\n        \"message\": `Invalid credential ID format: ${cred}`,\n        \"severity\": \"error\"\n      });\n    }\n  }\n}\n\n// Check: Timeout within bounds\nif (toolspec.timeout_seconds < 1 || toolspec.timeout_seconds > 3600) {\n  issues.push({\n    \"field\": \"timeout_seconds\",\n    \"constraint\": \"timeout_bounds\",\n    \"message\": \"Timeout must be between 1 and 3600 seconds\",\n    \"severity\": \"error\"\n  });\n}\n\nreturn {\n  \"valid\": issues.filter(i => i.severity === \"error\").length === 0,\n  \"toolspec\": toolspec,\n  \"intent\": intent,\n  \"issues\": issues,\n  \"passed\": issues.length === 0\n};"
+      },
+      "id": "cross-validate-intent",
+      "name": "Cross-Validate Against Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200],
+      "notes": "CHECK: Rollback strategy, forbidden actions, credentials\nCHECK: Output schema alignment, timeout bounds\nSEVERITY: Error vs warning\nOUTPUT: valid, toolspec, intent, issues"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": false,\n  \"error\": \"cross_validation_failed\",\n  \"message\": \"ToolSpec violated Intent constraints\",\n  \"errors\": $json.issues,\n  \"intent_id\": $json.intent?.intent_id || null,\n  \"tool_id\": $json.toolspec?.tool_id || null\n};"
+      },
+      "id": "cross-validation-fail",
+      "name": "Cross-Validation Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400],
+      "notes": "HALT: Constraint violations are non-recoverable\nRETURN: 400 with specific issues\nEMIT: RunRecord (failure)"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": true,\n  \"toolspec\": $json.toolspec,\n  \"intent\": $json.intent,\n  \"message\": \"ToolSpec validated successfully\",\n  \"warnings\": $json.issues.filter(i => i.severity === \"warning\")\n};"
+      },
+      "id": "validation-pass",
+      "name": "Validation Pass",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200],
+      "notes": "PASS: ToolSpec is valid and ready for compilation\nEMIT: RunRecord (validation_success)\nRETURN: 200 with validated ToolSpec"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"valid\": false,\n  \"error\": \"schema_validation_failed\",\n  \"message\": $json.message,\n  \"errors\": $json.errors,\n  \"intent_id\": $json.intent?.intent_id || null\n};"
+      },
+      "id": "schema-fail",
+      "name": "Schema Validation Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400],
+      "notes": "HALT: Schema violations are non-recoverable\nRETURN: 400 with validation errors\nEMIT: RunRecord (failure)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.valid ? 200 : 400 }}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 300],
+      "notes": "RETURN: 200 on success, 400 on failure\nBODY: { valid, toolspec?, errors? }\nHEADERS: x-intent-id, x-tool-id echoed"
+    }
+  ],
+  "connections": {
+    "Validate ToolSpec Webhook (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "Load ToolSpec Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load ToolSpec Schema": {
+      "main": [
+        [
+          {
+            "node": "Validate ToolSpec Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate ToolSpec Schema": {
+      "main": [
+        [
+          {
+            "node": "Check ToolSpec Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check ToolSpec Valid": {
+      "main": [
+        [
+          {
+            "node": "Cross-Validate Against Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schema Validation Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cross-Validate Against Intent": {
+      "main": [
+        [
+          {
+            "node": "Validation Pass",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cross-Validation Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cross-Validation Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Pass": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schema Validation Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "toolforge_fail_and_log.json"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "validation",
+      "name": "Validation"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

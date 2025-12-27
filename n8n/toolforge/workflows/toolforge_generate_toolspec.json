@@ -1,0 +1,248 @@
+{
+  "name": "ToolForge: Generate ToolSpec",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "toolforge-generate-toolspec",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "generate-webhook",
+      "name": "Generate Webhook (DISABLED)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "disabled": true,
+      "notes": "RECEIVES: Validated IntentSpec JSON\nPURPOSE: Synthesize ToolSpec using LLM\nOUTPUTS: Generated ToolSpec (NOT YET VALIDATED)"
+    },
+    {
+      "parameters": {
+        "jsonCode": "const intent = $input.item.json;\n\n// Build LLM prompt from Intent\nconst prompt = `You are a tool synthesis engine. Given an operator intent, generate a ToolSpec JSON.\n\nOPERATOR INTENT:\n${JSON.stringify(intent, null, 2)}\n\nREQUIREMENTS:\n1. Generate a ToolSpec that fulfills the intent.objective\n2. Respect intent.constraints and intent.forbidden_actions absolutely\n3. Set execution_mode to \"remote\" for heavy compute, \"local\" for orchestration\n4. Declare ALL side_effects explicitly\n5. Set rollback_strategy based on intent.rollback_required\n6. Use ONLY credential IDs from intent.allowed_tools (if specified)\n7. output_schema must match intent.required_outputs\n\nRespond with valid ToolSpec JSON only. No explanations.\n`;\n\nreturn {\n  \"intent\": intent,\n  \"prompt\": prompt,\n  \"validation_level\": intent.validation_level || \"normal\"\n};"
+      },
+      "id": "build-prompt",
+      "name": "Build LLM Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "TEMPLATE: System prompt + Intent as JSON\nCONSTRAINT: LLM MUST output valid ToolSpec JSON\nMODE: strict (no conversational filler)\nTIMEOUT: 120 seconds (configurable)"
+    },
+    {
+      "parameters": {
+        "resource": "text-generation",
+        "operation": "message",
+        "modelId": "openai-gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You are a tool specification generator. Output ONLY valid JSON conforming to tool-spec.schema.json. No explanations, no markdown code blocks."
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 4096
+        }
+      },
+      "id": "call-llm",
+      "name": "Call LLM (LOCAL)",
+      "type": "@n8n/n8n-nodes-langchain.requestLlm",
+      "typeVersion": 1.4,
+      "position": [680, 300],
+      "notes": "PROVIDER: OpenAI (or compatible)\nMODEL: GPT-4 or Claude 3.5 Sonnet\nMODE: LOCAL (orchestration only)\nCREDENTIAL: OPENAI_API_KEY (from n8n credentials)\nTIMEOUT: 120 seconds"
+    },
+    {
+      "parameters": {
+        "jsonCode": "// Extract JSON from LLM response\nlet response = $input.item.text;\n\n// Remove markdown code blocks if present\nresponse = response.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n\nlet toolspec;\ntry {\n  toolspec = JSON.parse(response);\n} catch (error) {\n  return {\n    \"success\": false,\n    \"error\": \"llm_output_invalid_json\",\n    \"message\": \"LLM did not output valid JSON\",\n    \"raw_response\": response,\n    \"parse_error\": error.message\n  };\n}\n\nreturn {\n  \"success\": true,\n  \"toolspec\": toolspec,\n  \"intent\": $json.intent,\n  \"raw_response\": response\n};"
+      },
+      "id": "extract-json",
+      "name": "Extract ToolSpec JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "CLEAN: Remove markdown code blocks\nPARSE: Strict JSON parsing\nFAIL: If not valid JSON, halt\nPASS: Parsed ToolSpec object"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-parsed",
+      "name": "Check Parsed Successfully",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "notes": "IF success=true: Proceed to ToolSpec validation\nIF success=false: Return 500 (LLM generation failed)"
+    },
+    {
+      "parameters": {
+        "url": "=http://n8n:5678/webhook/toolforge-validate-toolspec",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { toolspec: $json.toolspec, intent: $json.intent } }}",
+        "options": {}
+      },
+      "id": "call-validate-toolspec",
+      "name": "Call Validate ToolSpec (INTERNAL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 200],
+      "notes": "TARGET: Internal n8n workflow\nEXECUTION: LOCAL\nPURPOSE: Validate against tool-spec.schema.json\nTIMEOUT: 30 seconds"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"success\": false,\n  \"error\": \"llm_generation_failed\",\n  \"message\": $json.message,\n  \"raw_response\": $json.raw_response,\n  \"parse_error\": $json.parse_error,\n  \"intent_id\": $json.intent?.intent_id || null\n};"
+      },
+      "id": "generation-fail",
+      "name": "Generation Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400],
+      "notes": "HALT: LLM failed to generate valid JSON\nRETURN: 500 with error details\nEMIT: RunRecord (failure)\nRETRY: May be attempted by operator"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.success || $json.valid ? 200 : 500 }}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 300],
+      "notes": "RETURN: 200 on success, 500 on failure\nBODY: { success, toolspec?, errors? }\nHEADERS: x-intent-id echoed"
+    }
+  ],
+  "connections": {
+    "Generate Webhook (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM (LOCAL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM (LOCAL)": {
+      "main": [
+        [
+          {
+            "node": "Extract ToolSpec JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract ToolSpec JSON": {
+      "main": [
+        [
+          {
+            "node": "Check Parsed Successfully",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Parsed Successfully": {
+      "main": [
+        [
+          {
+            "node": "Call Validate ToolSpec (INTERNAL)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generation Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Validate ToolSpec (INTERNAL)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generation Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "toolforge_fail_and_log.json"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "generation",
+      "name": "Generation"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

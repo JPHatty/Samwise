@@ -1,0 +1,220 @@
+{
+  "name": "ToolForge: Intake & Route",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "toolforge/intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "intake-webhook",
+      "name": "Intake Webhook (DISABLED)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "disabled": true,
+      "notes": "RECEIVES: Raw IntentSpec JSON payload\nVALIDATES: JSON structure only, not schema\nOUTPUTS: Parsed JSON object to validation"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"timestamp\": new Date().toISOString(),\n  \"payload\": $input.item.json,\n  \"source\": $webhook.headers[\"x-intent-source\"] || \"unknown\",\n  \"correlation_id\": $webhook.headers[\"x-correlation-id\"] || null\n};"
+      },
+      "id": "extract-metadata",
+      "name": "Extract Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "EXTRACT: Headers and metadata\nSTORE: correlation_id for tracing\nPASS: Payload unchanged"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.payload }}",
+              "value2": "",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "validate-payload",
+      "name": "Validate Payload Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "CHECK: Payload is not empty\nIF TRUE: Proceed to intent validation\nIF FALSE: Return 400 error"
+    },
+    {
+      "parameters": {
+        "url": "=http://n8n:5678/webhook/toolforge-validate-intent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "call-validate-intent",
+      "name": "Call Validate Intent (INTERNAL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "notes": "TARGET: Internal n8n workflow\nEXECUTION: LOCAL (same n8n container)\nPURPOSE: Validate against intent-spec.schema.json\nTIMEOUT: 30 seconds"
+    },
+    {
+      "parameters": {
+        "url": "=http://n8n:5678/webhook/toolforge-generate-toolspec",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {}
+      },
+      "id": "call-generate-toolspec",
+      "name": "Call Generate ToolSpec (INTERNAL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400],
+      "notes": "TARGET: Internal n8n workflow\nEXECUTION: LOCAL (LLM call via LangChain)\nPURPOSE: Synthesize ToolSpec from Intent\nTIMEOUT: 120 seconds"
+    },
+    {
+      "parameters": {
+        "jsonCode": "return {\n  \"status\": \"error\",\n  \"error\": \"validation_failed\",\n  \"message\": \"Payload is empty or invalid JSON\",\n  \"timestamp\": new Date().toISOString(),\n  \"correlation_id\": $json.correlation_id\n};"
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 600],
+      "notes": "RETURN: 400 Bad Request\nLOG: Validation failure\nHALT: Do not proceed to generation"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "response-node",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300],
+      "notes": "RETURN: Validation result or ToolSpec\nCODE: 200 on success, 400 on failure\nHEADERS: x-correlation-id echoed"
+    }
+  ],
+  "connections": {
+    "Intake Webhook (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Validate Payload Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload Exists": {
+      "main": [
+        [
+          {
+            "node": "Call Validate Intent (INTERNAL)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Validate Intent (INTERNAL)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Generate ToolSpec (INTERNAL)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "toolforge_fail_and_log.json"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "toolforge",
+      "name": "ToolForge"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "intake",
+      "name": "Intake"
+    },
+    {
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z",
+      "id": "v1.0.0",
+      "name": "v1.0.0"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-26T00:00:00.000Z",
+  "versionId": "1.0.0"
+}
