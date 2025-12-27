@@ -221,15 +221,25 @@ services:
       - net.core.somaxconn=1024
 
   # ============================================================
-  # POSTGRESQL - Primary Database (with pgvector + jsonb)
+  # POSTGRESQL - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Supabase (PostgreSQL 16 + pgvector)
+  # LOCATION: https://supabase.com
+  # PURPOSE: Primary database with vector search
+  # CONNECTION: Use SUPABASE_DB, SUPABASE_HOST, SUPABASE_PASSWORD
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED SUPABASE INSTANCE
+  # - Managed backups required
+  # - Automatic failover required
+  # - pgvector extension provided by Supabase
   postgresql:
     image: pgvector/pgvector:pg16
-    container_name: samwise-postgresql
-    restart: unless-stopped
+    container_name: samwise-postgresql-stub
+    restart: "no"
     profiles:
-      - database
-      - core
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Supabase instead.
     volumes:
       - ./data/postgresql:/var/lib/postgresql/data
     networks:
@@ -242,37 +252,47 @@ services:
         reservations:
           cpus: '1.0'
           memory: 1G
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     environment:
+      # Document expected cloud environment variables:
+      # SUPABASE_URL=https://xxxxx.supabase.co
+      # SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      # SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      # SUPABASE_DB=postgresql
+      # SUPABASE_HOST=xxxxx.supabase.co
+      # SUPABASE_PORT=5432
+      # SUPABASE_USER=postgres
+      # SUPABASE_PASSWORD=...
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB:-samwise}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
       - PGDATA=/var/lib/postgresql/data/pgdata
-    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'PostgreSQL is CLOUD ONLY - use Supabase' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
-  # QDRANT - Vector Database
+  # QDRANT - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Northflank (Qdrant v1.7) or Fly.io
+  # LOCATION: https://northflank.com or https://fly.io
+  # PURPOSE: Vector similarity search, heavy compute
+  # CONNECTION: Use QDRANT_URL, QDRANT_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK OR FLY.IO QDRANT
+  # - Managed storage required for vector data
+  # - Automatic scaling required for compute
+  # - Persistent backups required
   qdrant:
     image: qdrant/qdrant:v1.7.0
-    container_name: samwise-qdrant
-    restart: unless-stopped
+    container_name: samwise-qdrant-stub
+    restart: "no"
     profiles:
-      - database
-      - vector
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank or Fly.io instead.
     volumes:
       - ./data/qdrant:/qdrant/storage
     networks:
@@ -285,29 +305,39 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
     environment:
+      # Document expected cloud environment variables:
+      # QDRANT_URL=https://qdrant.example.com
+      # QDRANT_API_KEY=your_api_key_here
       - QDRANT__SERVICE__GRPC_PORT=6334
       - QDRANT__LOG_LEVEL=${QDRANT_LOG_LEVEL:-INFO}
       - QDRANT__SERVICE__MAX_REQUEST_SIZE_MB=32
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Qdrant is CLOUD ONLY - use Northflank or Fly.io' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
-  # MEILISEARCH - Full-Text Search Engine
+  # MEILISEARCH - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Northflank (Meilisearch v1.5)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Full-text search, heavy compute
+  # CONNECTION: Use MEILISEARCH_HOST, MEILISEARCH_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK MEILISEARCH
+  # - Persistent search indexes required
+  # - Heavy compute for indexing
+  # - CDN distribution for queries
   meilisearch:
     image: getmeili/meilisearch:v1.5
-    container_name: samwise-meilisearch
-    restart: unless-stopped
+    container_name: samwise-meilisearch-stub
+    restart: "no"
     profiles:
-      - database
-      - search
-    ports:
-      - "7700:7700"
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank instead.
     volumes:
       - ./data/meilisearch:/meili_data
     networks:
@@ -320,32 +350,41 @@ services:
         reservations:
           cpus: '0.5'
           memory: 256M
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:7700/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
     environment:
+      # Document expected cloud environment variables:
+      # MEILISEARCH_HOST=https://meilisearch.example.com
+      # MEILISEARCH_API_KEY=your_master_key_here
       - MEILI_MASTER_KEY=${MEILISEARCH_MASTER_KEY}
       - MEILI_ENV=${MEILISEARCH_ENV:-development}
       - MEILI_NO_ANALYTICS=${MEILISEARCH_NO_ANALYTICS:-true}
       - MEILI_LOG_LEVEL=${MEILISEARCH_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Meilisearch is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
-  # MINIO - Object Storage (S3-Compatible)
+  # MINIO - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Cloudflare R2 (S3-compatible API)
+  # LOCATION: https://cloudflare.com/products/r2
+  # PURPOSE: S3-compatible object storage with CDN
+  # CONNECTION: Use R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+  #
+  # DO NOT RUN LOCALLY - USE CLOUDFLARE R2
+  # - Unlimited storage on free tier
+  # - CDN-backed global distribution
+  # - Zero egress fees
+  # - S3-compatible API
   minio:
     image: minio/minio:latest
-    container_name: samwise-minio
-    restart: unless-stopped
+    container_name: samwise-minio-stub
+    restart: "no"
     profiles:
-      - storage
-      - core
-    command: ["server", "/data", "--console-address", ":9001"]
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use Cloudflare R2 instead.
     volumes:
       - ./data/minio:/data
     networks:
@@ -358,30 +397,42 @@ services:
         reservations:
           cpus: '0.5'
           memory: 256M
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 5
-      start_period: 30s
     environment:
+      # Document expected cloud environment variables:
+      # R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
+      # R2_ACCESS_KEY_ID=your_access_key_id
+      # R2_SECRET_ACCESS_KEY=your_secret_access_key
+      # R2_BUCKET=your_bucket_name
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
       - MINIO_REGION=${MINIO_REGION:-us-east-1}
       - MINIO_BROWSER=${MINIO_BROWSER:-on}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'MinIO is CLOUD ONLY - use Cloudflare R2' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
-  # GRAFANA - Metrics Visualization Dashboard
+  # GRAFANA - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Northflank (Grafana)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Metrics visualization dashboard (read-only)
+  # CONNECTION: Use GRAFANA_URL, GRAFANA_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK GRAFANA
+  # - Read-only metrics dashboard
+  # - Cloud Prometheus data source
+  # - No local state required
   grafana:
     image: grafana/grafana:latest
-    container_name: samwise-grafana
-    restart: unless-stopped
+    container_name: samwise-grafana-stub
+    restart: "no"
     profiles:
-      - observability
-      - monitoring
-    ports:
-      - "3001:3000"
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank Grafana instead.
     volumes:
       - ./data/grafana:/var/lib/grafana
       - ./data/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -396,38 +447,42 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
     environment:
+      # Document expected cloud environment variables:
+      # GRAFANA_URL=https://grafana.example.com
+      # GRAFANA_API_KEY=your_api_key_here
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3001}
       - GF_LOG_LEVEL=${GRAFANA_LOG_LEVEL:-info}
       - GF_INSTALL_PLUGINS=${GRAFANA_PLUGINS}
       - GF_USERS_ALLOW_SIGN_UP=false
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Grafana is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
-  # PROMETHEUS - Metrics Collection & Storage
+  # PROMETHEUS - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Northflank (Prometheus)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Time-series metrics database
+  # CONNECTION: Use PROMETHEUS_URL, PROMETHEUS_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK PROMETHEUS
+  # - Heavy storage requirements for metrics
+  # - Long retention periods
+  # - Cloud-managed backups
   prometheus:
     image: prom/prometheus:latest
-    container_name: samwise-prometheus
-    restart: unless-stopped
+    container_name: samwise-prometheus-stub
+    restart: "no"
     profiles:
-      - observability
-      - monitoring
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}"
-      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
-      - "--web.console.templates=/usr/share/prometheus/consoles"
-    ports:
-      - "9090:9090"
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank Prometheus instead.
     volumes:
       - ./data/prometheus:/prometheus
       - ./data/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -441,30 +496,37 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
     environment:
+      # Document expected cloud environment variables:
+      # PROMETHEUS_URL=https://prometheus.example.com
+      # PROMETHEUS_API_KEY=your_api_key_here
       - PROMETHEUS_LOG_LEVEL=${PROMETHEUS_LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Prometheus is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
-  # LOKI - Log Aggregation & Query
+  # LOKI - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
   # ============================================================
+  # PROVIDER: Northflank (Loki)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Log aggregation and query
+  # CONNECTION: Use LOKI_URL, LOKI_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK LOKI
+  # - Heavy storage for log retention
+  # - Distributed indexing
+  # - Cloud-managed backups
   loki:
     image: grafana/loki:latest
-    container_name: samwise-loki
-    restart: unless-stopped
+    container_name: samwise-loki-stub
+    restart: "no"
     profiles:
-      - observability
-      - monitoring
-    command:
-      - "-config.file=/etc/loki/local-config.yaml"
-      - "-config.expand-env=true"
-    ports:
-      - "3100:3100"
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank Loki instead.
     volumes:
       - ./data/loki:/loki
       - ./data/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
@@ -478,14 +540,16 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
     environment:
+      # Document expected cloud environment variables:
+      # LOKI_URL=https://loki.example.com
+      # LOKI_API_KEY=your_api_key_here
       - LOKI_LOG_LEVEL=${LOKI_LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Loki is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
 
   # ============================================================
   # TAILSCALE - Sidecar VPN (Networking Tunnel)
