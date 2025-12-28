@@ -1,0 +1,655 @@
+# Docker Compose v2 Configuration for samwise
+# CONSTRAINTS-FIRST DOCTRINE: All services disabled by default via profiles
+# Activation: docker compose --profile <profile> up
+
+# IMPORTANT: No service may exceed declared limits
+# - Resource limits are absolute ceilings
+# - Volumes are explicit under data/ directory
+# - Healthcheck stubs are placeholders (not executed until service starts)
+# - No implicit networks; all explicit
+
+services:
+  # ============================================================
+  # TRAEFIK - Reverse Proxy & Load Balancer
+  # ============================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: samwise-traefik
+    restart: unless-stopped
+    profiles:
+      - ingress
+      - core
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./data/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./data/traefik/acme.json:/acme.json
+    networks:
+      - samwise-ingress
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    environment:
+      - TRAEFIK_DASHBOARD_INSECURE=${TRAEFIK_DASHBOARD_INSECURE:-false}
+      - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL:-INFO}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.local`)"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
+
+  # ============================================================
+  # N8N - Workflow Automation Platform
+  # ============================================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: samwise-n8n
+    restart: unless-stopped
+    profiles:
+      - workflows
+      - core
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./data/n8n:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows:ro
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5678/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL}
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - N8N_LOG_LEVEL=${N8N_LOG_LEVEL:-info}
+      - N8N_LOG_OUTPUT=${N8N_LOG_OUTPUT:-console}
+      - N8N_METRICS=${N8N_METRICS:-false}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # ============================================================
+  # N8N-MCP - Model Context Protocol Server for n8n
+  # ============================================================
+  n8n-mcp:
+    image: node:20-alpine
+    container_name: samwise-n8n-mcp
+    restart: unless-stopped
+    profiles:
+      - mcp
+      - workflows
+    command: ["sh", "-c", "echo 'MCP server stub - implementation pending' && sleep 3600"]
+    volumes:
+      - ./data/n8n-mcp:/app/data
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "node"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      - MCP_PORT=${N8N_MCP_PORT:-3000}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - LOG_LEVEL=${MCP_LOG_LEVEL:-info}
+
+  # ============================================================
+  # N8N-WORKFLOWS-MCP - Workflow Discovery MCP Server
+  # ============================================================
+  n8n-workflows-mcp:
+    image: node:20-alpine
+    container_name: samwise-n8n-workflows-mcp
+    restart: unless-stopped
+    profiles:
+      - mcp
+      - workflows
+    command: ["sh", "-c", "echo 'Workflows MCP server stub - implementation pending' && sleep 3600"]
+    volumes:
+      - ./n8n/workflows:/workflows:ro
+      - ./data/n8n-workflows-mcp:/app/data
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "node"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      - MCP_PORT=${N8N_WORKFLOWS_MCP_PORT:-3001}
+      - WORKFLOWS_PATH=/workflows
+      - N8N_API_URL=${N8N_API_URL:-http://n8n:5678}
+      - N8N_API_KEY=${N8N_API_KEY}
+      - LOG_LEVEL=${MCP_LOG_LEVEL:-info}
+
+  # ============================================================
+  # REDIS - State Management & Cache
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: samwise-redis
+    restart: unless-stopped
+    profiles:
+      - state
+      - core
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ./data/redis:/data
+      - ./data/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    environment:
+      - REDIS_REPLICATION_MODE=master
+    sysctls:
+      - net.core.somaxconn=1024
+
+  # ============================================================
+  # POSTGRESQL - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Supabase (PostgreSQL 16 + pgvector)
+  # LOCATION: https://supabase.com
+  # PURPOSE: Primary database with vector search
+  # CONNECTION: Use SUPABASE_DB, SUPABASE_HOST, SUPABASE_PASSWORD
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED SUPABASE INSTANCE
+  # - Managed backups required
+  # - Automatic failover required
+  # - pgvector extension provided by Supabase
+  postgresql:
+    image: pgvector/pgvector:pg16
+    container_name: samwise-postgresql-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Supabase instead.
+    volumes:
+      - ./data/postgresql:/var/lib/postgresql/data
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    environment:
+      # Document expected cloud environment variables:
+      # SUPABASE_URL=https://xxxxx.supabase.co
+      # SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      # SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      # SUPABASE_DB=postgresql
+      # SUPABASE_HOST=xxxxx.supabase.co
+      # SUPABASE_PORT=5432
+      # SUPABASE_USER=postgres
+      # SUPABASE_PASSWORD=...
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-samwise}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'PostgreSQL is CLOUD ONLY - use Supabase' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # QDRANT - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Northflank (Qdrant v1.7) or Fly.io
+  # LOCATION: https://northflank.com or https://fly.io
+  # PURPOSE: Vector similarity search, heavy compute
+  # CONNECTION: Use QDRANT_URL, QDRANT_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK OR FLY.IO QDRANT
+  # - Managed storage required for vector data
+  # - Automatic scaling required for compute
+  # - Persistent backups required
+  qdrant:
+    image: qdrant/qdrant:v1.7.0
+    container_name: samwise-qdrant-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank or Fly.io instead.
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    environment:
+      # Document expected cloud environment variables:
+      # QDRANT_URL=https://qdrant.example.com
+      # QDRANT_API_KEY=your_api_key_here
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=${QDRANT_LOG_LEVEL:-INFO}
+      - QDRANT__SERVICE__MAX_REQUEST_SIZE_MB=32
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Qdrant is CLOUD ONLY - use Northflank or Fly.io' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # MEILISEARCH - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Northflank (Meilisearch v1.5)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Full-text search, heavy compute
+  # CONNECTION: Use MEILISEARCH_HOST, MEILISEARCH_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK MEILISEARCH
+  # - Persistent search indexes required
+  # - Heavy compute for indexing
+  # - CDN distribution for queries
+  meilisearch:
+    image: getmeili/meilisearch:v1.5
+    container_name: samwise-meilisearch-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank instead.
+    volumes:
+      - ./data/meilisearch:/meili_data
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    environment:
+      # Document expected cloud environment variables:
+      # MEILISEARCH_HOST=https://meilisearch.example.com
+      # MEILISEARCH_API_KEY=your_master_key_here
+      - MEILI_MASTER_KEY=${MEILISEARCH_MASTER_KEY}
+      - MEILI_ENV=${MEILISEARCH_ENV:-development}
+      - MEILI_NO_ANALYTICS=${MEILISEARCH_NO_ANALYTICS:-true}
+      - MEILI_LOG_LEVEL=${MEILISEARCH_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Meilisearch is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # MINIO - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Cloudflare R2 (S3-compatible API)
+  # LOCATION: https://cloudflare.com/products/r2
+  # PURPOSE: S3-compatible object storage with CDN
+  # CONNECTION: Use R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+  #
+  # DO NOT RUN LOCALLY - USE CLOUDFLARE R2
+  # - Unlimited storage on free tier
+  # - CDN-backed global distribution
+  # - Zero egress fees
+  # - S3-compatible API
+  minio:
+    image: minio/minio:latest
+    container_name: samwise-minio-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use Cloudflare R2 instead.
+    volumes:
+      - ./data/minio:/data
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    environment:
+      # Document expected cloud environment variables:
+      # R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
+      # R2_ACCESS_KEY_ID=your_access_key_id
+      # R2_SECRET_ACCESS_KEY=your_secret_access_key
+      # R2_BUCKET=your_bucket_name
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - MINIO_BROWSER=${MINIO_BROWSER:-on}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'MinIO is CLOUD ONLY - use Cloudflare R2' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # GRAFANA - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Northflank (Grafana)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Metrics visualization dashboard (read-only)
+  # CONNECTION: Use GRAFANA_URL, GRAFANA_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK GRAFANA
+  # - Read-only metrics dashboard
+  # - Cloud Prometheus data source
+  # - No local state required
+  grafana:
+    image: grafana/grafana:latest
+    container_name: samwise-grafana-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank Grafana instead.
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./data/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - samwise-internal
+      - samwise-ingress
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      # Document expected cloud environment variables:
+      # GRAFANA_URL=https://grafana.example.com
+      # GRAFANA_API_KEY=your_api_key_here
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3001}
+      - GF_LOG_LEVEL=${GRAFANA_LOG_LEVEL:-info}
+      - GF_INSTALL_PLUGINS=${GRAFANA_PLUGINS}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Grafana is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # PROMETHEUS - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Northflank (Prometheus)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Time-series metrics database
+  # CONNECTION: Use PROMETHEUS_URL, PROMETHEUS_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK PROMETHEUS
+  # - Heavy storage requirements for metrics
+  # - Long retention periods
+  # - Cloud-managed backups
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: samwise-prometheus-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank Prometheus instead.
+    volumes:
+      - ./data/prometheus:/prometheus
+      - ./data/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    environment:
+      # Document expected cloud environment variables:
+      # PROMETHEUS_URL=https://prometheus.example.com
+      # PROMETHEUS_API_KEY=your_api_key_here
+      - PROMETHEUS_LOG_LEVEL=${PROMETHEUS_LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Prometheus is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # LOKI - CLOUD SERVICE STUB (DO NOT RUN LOCALLY)
+  # ============================================================
+  # PROVIDER: Northflank (Loki)
+  # LOCATION: https://northflank.com
+  # PURPOSE: Log aggregation and query
+  # CONNECTION: Use LOKI_URL, LOKI_API_KEY
+  #
+  # DO NOT RUN LOCALLY - USE MANAGED NORTHFLANK LOKI
+  # - Heavy storage for log retention
+  # - Distributed indexing
+  # - Cloud-managed backups
+  loki:
+    image: grafana/loki:latest
+    container_name: samwise-loki-stub
+    restart: "no"
+    profiles:
+      - cloud-stub
+    # DO NOT RUN LOCALLY - ALWAYS FAIL HEALTHCHECK
+    # This service is documentation-only. Use managed Northflank Loki instead.
+    volumes:
+      - ./data/loki:/loki
+      - ./data/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    environment:
+      # Document expected cloud environment variables:
+      # LOKI_URL=https://loki.example.com
+      # LOKI_API_KEY=your_api_key_here
+      - LOKI_LOG_LEVEL=${LOKI_LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Loki is CLOUD ONLY - use Northflank' && exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+
+  # ============================================================
+  # TAILSCALE - Sidecar VPN (Networking Tunnel)
+  # ============================================================
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: samwise-tailscale
+    restart: unless-stopped
+    profiles:
+      - networking
+      - vpn
+    hostname: samwise
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - /dev/net/tun:/dev/net/tun
+      - ./data/tailscale:/var/lib/tailscale
+      - /var/run:/var/run:ro
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "tailscale", "status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---advertise-exit-node}
+      - TS_LOG_LEVEL=${TS_LOG_LEVEL:-info}
+
+  # ============================================================
+  # DESKTOP-COMMANDER - Local Execution Interface
+  # ============================================================
+  desktop-commander:
+    image: node:20-alpine
+    container_name: samwise-desktop-commander
+    restart: unless-stopped
+    profiles:
+      - utilities
+      - local
+    command: ["sh", "-c", "echo 'Desktop Commander stub - interface only, no execution' && sleep 3600"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/desktop-commander:/app/data
+    networks:
+      - samwise-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "node"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      - COMMANDER_PORT=${COMMANDER_PORT:-3002}
+      - LOG_LEVEL=${COMMANDER_LOG_LEVEL:-info}
+
+# ============================================================
+# NETWORKS - Explicit Network Definitions
+# ============================================================
+networks:
+  samwise-ingress:
+    name: samwise-ingress
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+
+  samwise-internal:
+    name: samwise-internal
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/16
+
+# ============================================================
+# VOLUMES - Explicit Volume Declarations (for reference)
+# Actual storage paths are defined in service volume mounts
+# ============================================================
+volumes:
+  traefik-acme:
+    driver: local
